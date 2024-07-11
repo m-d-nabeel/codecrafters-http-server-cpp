@@ -54,11 +54,13 @@ int main(int argc, char **argv) {
   accept(server_fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addr_len);
   std::cout << "Client connected\n";
 
-  std::string status_line   = "HTTP/1.1 200 OK\n";
-  std::string headers       = "";
-  std::string response_body = "";
+  // std::string status_line   = "HTTP/1.1 200 OK\n";
+  // std::string headers       = "";
+  // std::string response_body = "";
 
-  std::string response_str = status_line + "\r\n" + headers + "\r\n" + response_body;
+  // std::string response_str = status_line + "\r\n" + headers + "\r\n" + response_body;
+  std::string response_str = "HTTP/1.1 200 OK\r\n\r\n";
+
   send(server_fd, response_str.c_str(), response_str.length(), 0);
 
   std::cout << "Response sent\n";
