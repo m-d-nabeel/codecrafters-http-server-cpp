@@ -11,19 +11,24 @@ struct Headers {
   std::string host;
   std::string user_agent;
   std::string accept;
+  std::string content_type;
+  std::string content_length;
 
   std::string to_string() {
     return "Host: " + host + "\r\n" + "User-Agent: " + user_agent + "\r\n" + "Accept: " + accept +
+        "\r\n" + "Content-Type: " + content_type + "\r\n" + "Content-Length: " + content_length +
         "\r\n";
   }
 
-  std::string Default() {
+  struct Headers Default() {
     struct Headers headers;
-    headers.host       = "Host: localhost:4221";
-    headers.user_agent = "User-Agent: Mozilla/5.0";
-    headers.accept     = "Accept: text/html";
+    headers.host           = "localhost:4221";
+    headers.user_agent     = "curl/7.88.1";
+    headers.accept         = "text/plain";
+    headers.content_type   = "text/plain";
+    headers.content_length = "0";
 
-    return std::move(headers.to_string());
+    return std::move(headers);
   }
 };
 
@@ -38,30 +43,25 @@ struct Response {
     return method + " " + path + " " + version + "\r\n" + headers.to_string() + "\r\n" + body;
   }
 
-  std::string Default() {
+  struct Response Default() {
     struct Response response;
-    response.method             = "HTTP/1.1";
-    response.path               = "200";
-    response.version            = "OK";
-    response.headers.host       = "Host: localhost:4221";
-    response.headers.user_agent = "User-Agent: curl/7.88.1";
-    response.headers.accept     = "Accept: */*";
-    response.body               = "";
+    response.method  = "HTTP/1.1";
+    response.path    = "200";
+    response.version = "OK";
+    response.headers = response.headers.Default();
+    response.body    = "";
 
-    return std::move(response.to_string());
+    return std::move(response);
   }
 
-  std::string NotFound() {
+  struct Response NotFound() {
     struct Response response;
-    response.method             = "HTTP/1.1";
-    response.path               = "404";
-    response.version            = "Not Found";
-    response.headers.host       = "Host: localhost:4221";
-    response.headers.user_agent = "User-Agent: curl/7.88.1";
-    response.headers.accept     = "Accept: */*";
-    response.body               = "404 Not Found";
+    response.method  = "HTTP/1.1";
+    response.path    = "404";
+    response.version = "Not Found";
+    response.headers = response.headers.Default();
 
-    return std::move(response.to_string());
+    return std::move(response);
   }
 };
 
@@ -138,10 +138,16 @@ int main(int argc, char **argv) {
   request_line.erase(0, pos + 1);
 
   if (path == "/" || path == "") {
-    const std::string response = Response().Default();
+    const std::string response = Response().Default().to_string();
     send(client, response.c_str(), response.length(), 0);
+  } else if (path.substr(0, 5) == "/echo") {
+    struct Response response        = Response().Default();
+    response.body                   = path.substr(6);
+    response.headers.content_length = std::to_string(response.body.length());
+    std::string response_str        = response.to_string();
+    send(client, response_str.c_str(), response_str.length(), 0);
   } else {
-    const std::string response = Response().NotFound();
+    const std::string response = Response().NotFound().to_string();
     send(client, response.c_str(), response.length(), 0);
   }
 
