@@ -147,12 +147,15 @@ int main(int argc, char **argv) {
   request.erase(0, pos + 2);
 
   if (path == "/" || path == "") {
-    std::string body                = user_agent.substr(12);
+    struct Response response = Response().Default();
+    std::string response_str = response.to_string();
+
+    send(client, response_str.c_str(), response_str.length(), 0);
+  } else if (path == "/user-agent") {
     struct Response response        = Response().Default();
-    response.body                   = body;
+    response.body                   = user_agent;
     response.headers.content_length = std::to_string(response.body.length());
     std::string response_str        = response.to_string();
-
     send(client, response_str.c_str(), response_str.length(), 0);
   } else if (path.substr(0, 5) == "/echo") {
     struct Response response        = Response().Default();
