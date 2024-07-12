@@ -1,6 +1,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <string>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/socket.h>
@@ -137,9 +138,22 @@ int main(int argc, char **argv) {
   std::string path = request_line.substr(0, pos);
   request_line.erase(0, pos + 1);
 
+  pos              = request.find("\r\n");
+  std::string host = request.substr(0, pos);
+  request.erase(0, pos + 2);
+
+  pos                    = request.find("\r\n");
+  std::string user_agent = request.substr(0, pos);
+  request.erase(0, pos + 2);
+
   if (path == "/" || path == "") {
-    const std::string response = Response().Default().to_string();
-    send(client, response.c_str(), response.length(), 0);
+    std::string body                = user_agent.substr(12);
+    struct Response response        = Response().Default();
+    response.body                   = body;
+    response.headers.content_length = std::to_string(response.body.length());
+    std::string response_str        = response.to_string();
+
+    send(client, response_str.c_str(), response_str.length(), 0);
   } else if (path.substr(0, 5) == "/echo") {
     struct Response response        = Response().Default();
     response.body                   = path.substr(6);
