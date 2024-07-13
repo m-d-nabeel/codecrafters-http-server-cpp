@@ -2,7 +2,6 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -30,19 +29,24 @@ struct Headers {
   std::string accept;
   std::string content_type;
   std::string content_length;
+  std::string accept_encoding;
+  std::string content_encoding;
 
   Headers() {
-    host           = "localhost:4221";
-    user_agent     = "curl/7.88.1";
-    accept         = "text/plain";
-    content_type   = "text/plain";
-    content_length = "0";
+    host             = "localhost:4221";
+    user_agent       = "curl/7.88.1";
+    accept           = "text/plain";
+    content_type     = "text/plain";
+    content_length   = "0";
+    accept_encoding  = "identity";
+    content_encoding = "identity";
   }
 
   std::string to_string() const {
     return "Host: " + host + "\r\n" + "User-Agent: " + user_agent + "\r\n" + "Accept: " + accept +
         "\r\n" + "Content-Type: " + content_type + "\r\n" + "Content-Length: " + content_length +
-        "\r\n";
+        "\r\n" + "Accept-Encoding: " + accept_encoding + "\r\n" +
+        "Content-Encoding: " + content_encoding + "\r\n";
   }
 };
 
@@ -196,7 +200,10 @@ void handle_client(int client_fd) {
 }
 
 void routing_logic(const int &client_fd, const Request &request) {
-
+  struct Response response = Response();
+  if (request.headers.accept_encoding == "gzip") {
+    response.headers.content_encoding = "gzip";
+  }
   if (request.method == "GET") {
     goto GET_METHODS;
   } else if (request.method == "POST") {
@@ -212,27 +219,15 @@ void routing_logic(const int &client_fd, const Request &request) {
   // Under this line, we have GET methods
 GET_METHODS:
   if (request.path == "/" || request.path == "") {
-    struct Response response = Response();
     std::string response_str = response.to_string();
-
     send(client_fd, response_str.c_str(), response_str.length(), 0);
   } else if (request.path == "/user-agent") {
-    struct Response response        = Response();
     response.body                   = request.headers.user_agent;
     response.headers.content_length = std::to_string(response.body.length());
     std::string response_str        = response.to_string();
-    std::cout << response_str << std::endl;
-
-    std::string temp = response.body;
-    int i            = 0;
-    for (i = 0; i < temp.length(); i++) {
-      std::cout << "[" << temp[i] << "]" << std::endl;
-    }
-    std::cout << "Length of user-agent : " << i << std::endl;
 
     send(client_fd, response_str.c_str(), response_str.length(), 0);
   } else if (request.path.substr(0, 5) == "/echo") {
-    struct Response response        = Response();
     response.body                   = request.path.substr(6);
     response.headers.content_length = std::to_string(response.body.length());
     std::string response_str        = response.to_string();
@@ -242,21 +237,20 @@ GET_METHODS:
     std::cout << file_path << std::endl;
     std::ifstream file(file_path, std::ios::out);
     if (file.is_open()) {
-      struct Response response = Response();
       std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
       response.body                   = content;
       response.headers.content_type   = "application/octet-stream";
       response.headers.content_length = std::to_string(response.body.length());
       std::string response_str        = response.to_string();
       send(client_fd, response_str.c_str(), response_str.length(), 0);
+      file.close();
     } else {
-      const std::string response = Response().NotFound().to_string();
-      send(client_fd, response.c_str(), response.length(), 0);
+      const std::string response_str = Response().NotFound().to_string();
+      send(client_fd, response_str.c_str(), response_str.length(), 0);
     }
-    file.close();
   } else {
-    const std::string response = Response().NotFound().to_string();
-    send(client_fd, response.c_str(), response.length(), 0);
+    const std::string response_str = Response().NotFound().to_string();
+    send(client_fd, response_str.c_str(), response_str.length(), 0);
   }
   return;
 
@@ -267,7 +261,6 @@ POST_METHODS:
     std::ofstream file(file_path);
     if (file.is_open()) {
       file << request.body;
-      struct Response response        = Response();
       response.status_code            = "201";
       response.reason_phrase          = "Created";
       response.headers.content_length = std::to_string(response.body.length());
@@ -275,12 +268,12 @@ POST_METHODS:
       send(client_fd, response_str.c_str(), response_str.length(), 0);
       file.close();
     } else {
-      const std::string response = Response().NotFound().to_string();
-      send(client_fd, response.c_str(), response.length(), 0);
+      const std::string response_str = Response().NotFound().to_string();
+      send(client_fd, response_str.c_str(), response_str.length(), 0);
     }
   } else {
-    const std::string response = Response().NotFound().to_string();
-    send(client_fd, response.c_str(), response.length(), 0);
+    const std::string response_str = Response().NotFound().to_string();
+    send(client_fd, response_str.c_str(), response_str.length(), 0);
   }
 }
 
@@ -342,6 +335,10 @@ struct Request parse_request(const std::string &request_str) {
       headers.content_type = value;
     } else if (key == "Content-Length") {
       headers.content_length = value;
+    } else if (key == "Accept-Encoding") {
+      headers.accept_encoding = value;
+    } else if (key == "Content-Encoding") {
+      headers.content_encoding = value;
     }
   }
 
