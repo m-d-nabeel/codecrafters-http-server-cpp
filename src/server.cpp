@@ -7,6 +7,7 @@
 #include <queue>
 #include <string>
 #include <thread>
+#include <vector>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/socket.h>
@@ -76,9 +77,9 @@ struct Response {
   }
 };
 
-void handle_client(int client_fd);
-
 void worker_thread();
+void signal_handler(int signum);
+void handle_client(int client_fd);
 
 int main(int argc, char **argv) {
   // Flush after every std::cout / std::cerr
@@ -125,16 +126,28 @@ int main(int argc, char **argv) {
   struct sockaddr_in client_addr;
   socklen_t client_addr_len = sizeof(client_addr);
 
-  // handle multiple clients
-  while (true) {
+  const int num_threads = 6;
+  std::vector<std::thread> threads;
+  for (int i = 0; i < num_threads; i++) {
+    threads.emplace_back(worker_thread);
+  }
+
+  while (running) {
     int client = accept(server_fd, (struct sockaddr *)&client_addr, &client_addr_len);
     if (client < 0) {
       std::cerr << "Failed to accept client connection\n";
       continue;
     }
     std::cout << "Client connected with client_id : " << client << std::endl;
-    std::thread t(handle_client, client);
-    t.join();
+    {
+      std::lock_guard<std::mutex> lock(queue_mutex);
+      client_queue.push(client);
+    }
+    cv.notify_one();
+  }
+
+  for (auto &thread : threads) {
+    thread.join();
   }
 
   close(server_fd);
@@ -213,4 +226,9 @@ void worker_thread() {
 
     handle_client(client_socket);
   }
+}
+
+void signal_handler(int signum) {
+  running = false;
+  cv.notify_all();
 }
