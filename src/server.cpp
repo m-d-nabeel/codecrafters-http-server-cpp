@@ -191,8 +191,10 @@ void handle_client(int client_fd) {
 
   std::string request_str(buffer);
   std::cout << request_str << std::endl;
+  std::cout << "----------------------\n";
 
   Request request = parse_request(request_str);
+  std::cout << request.to_string() << std::endl;
   routing_logic(client_fd, request);
 }
 
