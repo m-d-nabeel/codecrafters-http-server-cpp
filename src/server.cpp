@@ -1,6 +1,10 @@
+#include <atomic>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <mutex>
+#include <queue>
 #include <string>
 #include <thread>
 #include <arpa/inet.h>
@@ -8,6 +12,11 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+std::mutex queue_mutex;
+std::condition_variable cv;
+std::queue<int> client_queue;
+std::atomic<bool> running(true);
 
 struct Headers {
   std::string host;
@@ -69,13 +78,13 @@ struct Response {
 
 void handle_client(int client_fd);
 
+void worker_thread();
+
 int main(int argc, char **argv) {
   // Flush after every std::cout / std::cerr
   std::cout << std::unitbuf;
   std::cerr << std::unitbuf;
 
-  // You can use print statements as follows for debugging, they'll be visible
-  // when running tests.
   std::cout << "Logs from your program will appear here!\n";
 
   int server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -89,6 +98,7 @@ int main(int argc, char **argv) {
   int reuse = 1;
   if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
     std::cerr << "setsockopt failed\n";
+    close(server_fd);
     return 1;
   }
 
@@ -99,29 +109,35 @@ int main(int argc, char **argv) {
 
   if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) != 0) {
     std::cerr << "Failed to bind to port 4221\n";
+    close(server_fd);
     return 1;
   }
 
   int connection_backlog = 5;
   if (listen(server_fd, connection_backlog) != 0) {
     std::cerr << "listen failed\n";
+    close(server_fd);
     return 1;
   }
 
-  struct sockaddr_in client_addr;
-  int client_addr_len = sizeof(client_addr);
-
   std::cout << "Waiting for a client to connect...\n";
+
+  struct sockaddr_in client_addr;
+  socklen_t client_addr_len = sizeof(client_addr);
 
   // handle multiple clients
   while (true) {
-    int client = accept(server_fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addr_len);
+    int client = accept(server_fd, (struct sockaddr *)&client_addr, &client_addr_len);
+    if (client < 0) {
+      std::cerr << "Failed to accept client connection\n";
+      continue;
+    }
     std::cout << "Client connected with client_id : " << client << std::endl;
     std::thread t(handle_client, client);
-    t.detach();
+    t.join();
   }
-  close(server_fd);
 
+  close(server_fd);
   return 0;
 }
 
@@ -179,5 +195,22 @@ void handle_client(int client_fd) {
   } else {
     const std::string response = Response().NotFound().to_string();
     send(client_fd, response.c_str(), response.length(), 0);
+  }
+}
+
+void worker_thread() {
+  while (running) {
+    std::unique_lock<std::mutex> lock(queue_mutex);
+    cv.wait(lock, [] { return !client_queue.empty() || !running; });
+
+    if (!running && client_queue.empty()) {
+      return;
+    }
+
+    int client_socket = client_queue.front();
+    client_queue.pop();
+    lock.unlock();
+
+    handle_client(client_socket);
   }
 }
