@@ -190,9 +190,6 @@ void handle_client(int client_fd) {
   }
 
   std::string request_str(buffer);
-  std::cout << request_str << std::endl;
-  std::cout << "----------------------\n";
-
   Request request = parse_request(request_str);
   std::cout << request.to_string() << std::endl;
   routing_logic(client_fd, request);
@@ -224,6 +221,15 @@ GET_METHODS:
     response.body                   = request.headers.user_agent;
     response.headers.content_length = std::to_string(response.body.length());
     std::string response_str        = response.to_string();
+    std::cout << response_str << std::endl;
+
+    std::string temp = response.body;
+    int i            = 0;
+    for (i = 0; i < temp.length(); i++) {
+      std::cout << "[" << temp[i] << "]" << std::endl;
+    }
+    std::cout << "Length of user-agent : " << i << std::endl;
+
     send(client_fd, response_str.c_str(), response_str.length(), 0);
   } else if (request.path.substr(0, 5) == "/echo") {
     struct Response response        = Response();
@@ -318,7 +324,14 @@ struct Request parse_request(const std::string &request_str) {
     std::getline(header_line_stream, key, ':');
     std::string value;
     std::getline(header_line_stream, value);
-    value.erase(0, value.find_first_not_of(" \t")); // trim leading whitespace
+
+    auto trim = [](std::string &s) -> std::string {
+      return s.erase(0, s.find_first_not_of(" \t\r\n")).erase(s.find_last_not_of(" \t\r\n") + 1);
+    };
+
+    key   = trim(key);
+    value = trim(value);
+
     if (key == "Host") {
       headers.host = value;
     } else if (key == "User-Agent") {
