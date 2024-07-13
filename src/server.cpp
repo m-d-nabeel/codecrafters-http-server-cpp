@@ -2,6 +2,7 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <mutex>
 #include <queue>
@@ -14,10 +15,12 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+//------------ Global Variables ------------
 std::mutex queue_mutex;
 std::condition_variable cv;
 std::queue<int> client_queue;
 std::atomic<bool> running(true);
+std::string dir_path = "";
 
 struct Headers {
   std::string host;
@@ -77,14 +80,22 @@ struct Response {
   }
 };
 
+//------------ Function Declarations ------------
+
 void worker_thread();
 void signal_handler(int signum);
 void handle_client(int client_fd);
+
+//------------ Function Definitions ------------
 
 int main(int argc, char **argv) {
   // Flush after every std::cout / std::cerr
   std::cout << std::unitbuf;
   std::cerr << std::unitbuf;
+
+  if (argc == 3) {
+    dir_path = argv[2];
+  }
 
   std::cout << "Logs from your program will appear here!\n";
 
@@ -188,6 +199,7 @@ void handle_client(int client_fd) {
   std::string user_agent = request.substr(0, pos);
   request.erase(0, pos + 2);
 
+  /************************** Routing Logic *******************************/
   if (path == "/" || path == "") {
     struct Response response = Response().Default();
     std::string response_str = response.to_string();
@@ -205,6 +217,23 @@ void handle_client(int client_fd) {
     response.headers.content_length = std::to_string(response.body.length());
     std::string response_str        = response.to_string();
     send(client_fd, response_str.c_str(), response_str.length(), 0);
+  } else if (path.substr(0, 6) == "/files") {
+    std::string file_path = dir_path + path.substr(6);
+    std::cout << file_path << std::endl;
+    std::ifstream file(file_path, std::ios::out);
+    if (file.is_open()) {
+      struct Response response = Response().Default();
+      std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+      response.body                   = content;
+      response.headers.content_type   = "application/octet-stream";
+      response.headers.content_length = std::to_string(response.body.length());
+      std::string response_str        = response.to_string();
+      send(client_fd, response_str.c_str(), response_str.length(), 0);
+    } else {
+      const std::string response = Response().NotFound().to_string();
+      send(client_fd, response.c_str(), response.length(), 0);
+    }
+    file.close();
   } else {
     const std::string response = Response().NotFound().to_string();
     send(client_fd, response.c_str(), response.length(), 0);
