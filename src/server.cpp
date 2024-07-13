@@ -2,6 +2,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/socket.h>
@@ -66,6 +67,8 @@ struct Response {
   }
 };
 
+void handle_client(int client_fd);
+
 int main(int argc, char **argv) {
   // Flush after every std::cout / std::cerr
   std::cout << std::unitbuf;
@@ -110,15 +113,25 @@ int main(int argc, char **argv) {
 
   std::cout << "Waiting for a client to connect...\n";
 
-  int client = accept(server_fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addr_len);
-  std::cout << "Client connected\n";
+  // handle multiple clients
+  while (true) {
+    int client = accept(server_fd, (struct sockaddr *)&client_addr, (socklen_t *)&client_addr_len);
+    std::cout << "Client connected with client_id : " << client << std::endl;
+    std::thread t(handle_client, client);
+    t.detach();
+  }
+  close(server_fd);
 
+  return 0;
+}
+
+void handle_client(int client_fd) {
   char buffer[1024] = {0};
-  int n             = recv(client, buffer, 1024, 0);
+  int n             = recv(client_fd, buffer, 1024, 0);
 
   if (n == -1) {
     std::cerr << "Failed to receive data\n";
-    return 1;
+    return;
   }
 
   std::cout << "Received " << n << " bytes\n";
@@ -150,25 +163,21 @@ int main(int argc, char **argv) {
     struct Response response = Response().Default();
     std::string response_str = response.to_string();
 
-    send(client, response_str.c_str(), response_str.length(), 0);
+    send(client_fd, response_str.c_str(), response_str.length(), 0);
   } else if (path == "/user-agent") {
     struct Response response        = Response().Default();
     response.body                   = user_agent.substr(12);
     response.headers.content_length = std::to_string(response.body.length());
     std::string response_str        = response.to_string();
-    send(client, response_str.c_str(), response_str.length(), 0);
+    send(client_fd, response_str.c_str(), response_str.length(), 0);
   } else if (path.substr(0, 5) == "/echo") {
     struct Response response        = Response().Default();
     response.body                   = path.substr(6);
     response.headers.content_length = std::to_string(response.body.length());
     std::string response_str        = response.to_string();
-    send(client, response_str.c_str(), response_str.length(), 0);
+    send(client_fd, response_str.c_str(), response_str.length(), 0);
   } else {
     const std::string response = Response().NotFound().to_string();
-    send(client, response.c_str(), response.length(), 0);
+    send(client_fd, response.c_str(), response.length(), 0);
   }
-
-  close(server_fd);
-
-  return 0;
 }
