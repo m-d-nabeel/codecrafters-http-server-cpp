@@ -2,10 +2,12 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <mutex>
 #include <queue>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -29,54 +31,66 @@ struct Headers {
   std::string content_type;
   std::string content_length;
 
-  std::string to_string() {
+  Headers() {
+    host           = "localhost:4221";
+    user_agent     = "curl/7.88.1";
+    accept         = "text/plain";
+    content_type   = "text/plain";
+    content_length = "0";
+  }
+
+  std::string to_string() const {
     return "Host: " + host + "\r\n" + "User-Agent: " + user_agent + "\r\n" + "Accept: " + accept +
         "\r\n" + "Content-Type: " + content_type + "\r\n" + "Content-Length: " + content_length +
         "\r\n";
   }
-
-  struct Headers Default() {
-    struct Headers headers;
-    headers.host           = "localhost:4221";
-    headers.user_agent     = "curl/7.88.1";
-    headers.accept         = "text/plain";
-    headers.content_type   = "text/plain";
-    headers.content_length = "0";
-
-    return std::move(headers);
-  }
 };
 
 struct Response {
+  std::string version;
+  std::string status_code;
+  std::string reason_phrase;
+  Headers headers;
+  std::string body;
+
+  Response() {
+    version       = "HTTP/1.1";
+    status_code   = "200";
+    reason_phrase = "OK";
+    headers       = Headers();
+    body          = "";
+  }
+
+  static Response NotFound() {
+    Response response;
+    response.status_code   = "404";
+    response.reason_phrase = "Not Found";
+    response.body          = "404 Not Found";
+    return response;
+  }
+
+  std::string to_string() const {
+    return version + " " + status_code + " " + reason_phrase + "\r\n" + headers.to_string() +
+        "\r\n" + body;
+  }
+};
+
+struct Request {
   std::string method;
   std::string path;
   std::string version;
   Headers headers;
   std::string body;
 
-  std::string to_string() {
+  Request() {
+    method  = "GET";
+    path    = "/";
+    version = "HTTP/1.1";
+    headers = Headers();
+    body    = "";
+  }
+  std::string to_string() const {
     return method + " " + path + " " + version + "\r\n" + headers.to_string() + "\r\n" + body;
-  }
-
-  struct Response Default() {
-    struct Response response;
-    response.method  = "HTTP/1.1";
-    response.path    = "200";
-    response.version = "OK";
-    response.headers = response.headers.Default();
-    response.body    = "";
-
-    return std::move(response);
-  }
-
-  struct Response NotFound() {
-    struct Response response;
-    response.method  = "HTTP/1.1";
-    response.path    = "404";
-    response.version = "Not Found";
-    response.headers = response.headers.Default();
-
-    return std::move(response);
   }
 };
 
@@ -85,6 +99,8 @@ struct Response {
 void worker_thread();
 void signal_handler(int signum);
 void handle_client(int client_fd);
+struct Request parse_request(const std::string &request_str);
+void routing_logic(const int &client_fd, const Request &request);
 
 //------------ Function Definitions ------------
 
@@ -167,62 +183,58 @@ int main(int argc, char **argv) {
 
 void handle_client(int client_fd) {
   char buffer[1024] = {0};
-  int n             = recv(client_fd, buffer, 1024, 0);
 
-  if (n == -1) {
+  if (recv(client_fd, buffer, 1024, 0) < 0) {
     std::cerr << "Failed to receive data\n";
     return;
   }
 
-  std::cout << "Received " << n << " bytes\n";
+  std::string request_str(buffer);
+  std::cout << request_str << std::endl;
 
-  std::string request(buffer);
-  std::cout << request << std::endl;
+  Request request = parse_request(request_str);
+  routing_logic(client_fd, request);
+}
 
-  size_t pos               = request.find("\r\n");
-  std::string request_line = request.substr(0, pos);
-  request.erase(0, pos + 2);
+void routing_logic(const int &client_fd, const Request &request) {
 
-  pos                = request_line.find(" ");
-  std::string method = request_line.substr(0, pos);
-  request_line.erase(0, pos + 1);
-
-  pos              = request_line.find(" ");
-  std::string path = request_line.substr(0, pos);
-  request_line.erase(0, pos + 1);
-
-  pos              = request.find("\r\n");
-  std::string host = request.substr(0, pos);
-  request.erase(0, pos + 2);
-
-  pos                    = request.find("\r\n");
-  std::string user_agent = request.substr(0, pos);
-  request.erase(0, pos + 2);
-
-  /************************** Routing Logic *******************************/
-  if (path == "/" || path == "") {
-    struct Response response = Response().Default();
+  if (request.method == "GET") {
+    goto GET_METHODS;
+  } else if (request.method == "POST") {
+    goto POST_METHODS;
+  } else {
+    struct Response response = Response();
+    response.status_code     = "405";
+    response.reason_phrase   = "Method Not Allowed";
+    std::string response_str = response.to_string();
+    send(client_fd, response_str.c_str(), response_str.length(), 0);
+    return;
+  }
+  // Under this line, we have GET methods
+GET_METHODS:
+  if (request.path == "/" || request.path == "") {
+    struct Response response = Response();
     std::string response_str = response.to_string();
 
     send(client_fd, response_str.c_str(), response_str.length(), 0);
-  } else if (path == "/user-agent") {
-    struct Response response        = Response().Default();
-    response.body                   = user_agent.substr(12);
+  } else if (request.path == "/user-agent") {
+    struct Response response        = Response();
+    response.body                   = request.headers.user_agent;
     response.headers.content_length = std::to_string(response.body.length());
     std::string response_str        = response.to_string();
     send(client_fd, response_str.c_str(), response_str.length(), 0);
-  } else if (path.substr(0, 5) == "/echo") {
-    struct Response response        = Response().Default();
-    response.body                   = path.substr(6);
+  } else if (request.path.substr(0, 5) == "/echo") {
+    struct Response response        = Response();
+    response.body                   = request.path.substr(6);
     response.headers.content_length = std::to_string(response.body.length());
     std::string response_str        = response.to_string();
     send(client_fd, response_str.c_str(), response_str.length(), 0);
-  } else if (path.substr(0, 6) == "/files") {
-    std::string file_path = dir_path + path.substr(6);
+  } else if (request.path.substr(0, 6) == "/files") {
+    std::string file_path = dir_path + request.path.substr(6);
     std::cout << file_path << std::endl;
     std::ifstream file(file_path, std::ios::out);
     if (file.is_open()) {
-      struct Response response = Response().Default();
+      struct Response response = Response();
       std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
       response.body                   = content;
       response.headers.content_type   = "application/octet-stream";
@@ -234,6 +246,30 @@ void handle_client(int client_fd) {
       send(client_fd, response.c_str(), response.length(), 0);
     }
     file.close();
+  } else {
+    const std::string response = Response().NotFound().to_string();
+    send(client_fd, response.c_str(), response.length(), 0);
+  }
+  return;
+
+  // Under this line, we have POST methods
+POST_METHODS:
+  if (request.path.substr(0, 6) == "/files") {
+    std::string file_path = dir_path + request.path.substr(6);
+    std::ofstream file(file_path);
+    if (file.is_open()) {
+      file << request.body;
+      struct Response response        = Response();
+      response.status_code            = "201";
+      response.reason_phrase          = "Created";
+      response.headers.content_length = std::to_string(response.body.length());
+      std::string response_str        = response.to_string();
+      send(client_fd, response_str.c_str(), response_str.length(), 0);
+      file.close();
+    } else {
+      const std::string response = Response().NotFound().to_string();
+      send(client_fd, response.c_str(), response.length(), 0);
+    }
   } else {
     const std::string response = Response().NotFound().to_string();
     send(client_fd, response.c_str(), response.length(), 0);
@@ -260,4 +296,53 @@ void worker_thread() {
 void signal_handler(int signum) {
   running = false;
   cv.notify_all();
+}
+
+struct Request parse_request(const std::string &request_str) {
+  std::istringstream request_stream(request_str);
+  std::string line;
+
+  // Parse the request line
+  std::getline(request_stream, line);
+  std::istringstream request_line_stream(line);
+  std::string method, path, version;
+  request_line_stream >> method >> path >> version;
+
+  Headers headers;
+  // Parse headers
+  while (std::getline(request_stream, line) && line != "\r") {
+    std::istringstream header_line_stream(line);
+    std::string key;
+    std::getline(header_line_stream, key, ':');
+    std::string value;
+    std::getline(header_line_stream, value);
+    value.erase(0, value.find_first_not_of(" \t")); // trim leading whitespace
+    if (key == "Host") {
+      headers.host = value;
+    } else if (key == "User-Agent") {
+      headers.user_agent = value;
+    } else if (key == "Accept") {
+      headers.accept = value;
+    } else if (key == "Content-Type") {
+      headers.content_type = value;
+    } else if (key == "Content-Length") {
+      headers.content_length = value;
+    }
+  }
+
+  // Parse body
+  std::string body;
+  if (headers.content_length != "") {
+    int content_length = std::stoi(headers.content_length);
+    body.resize(content_length);
+    request_stream.read(&body[0], content_length);
+  }
+
+  struct Request request = Request();
+  request.method         = method;
+  request.path           = path;
+  request.headers        = headers;
+  request.body           = body;
+
+  return request;
 }
