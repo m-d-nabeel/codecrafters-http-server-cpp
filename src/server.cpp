@@ -16,6 +16,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <zlib.h>
 
 //------------ Global Variables ------------
 std::mutex queue_mutex;
@@ -110,6 +111,7 @@ void signal_handler(int signum);
 void handle_client(int client_fd);
 struct Request parse_request(const std::string &request_str);
 void routing_logic(const int &client_fd, const Request &request);
+std::string compress_string(const std::string &str);
 
 //------------ Function Definitions ------------
 
@@ -206,14 +208,6 @@ void handle_client(int client_fd) {
 
 void routing_logic(const int &client_fd, const Request &request) {
   struct Response response = Response();
-
-  auto other_headers = request.headers.other_headers;
-
-  if (other_headers.find("Accept-Encoding") != other_headers.end() &&
-      other_headers["Accept-Encoding"].find("gzip") != std::string::npos) {
-    response.headers.other_headers["Content-Encoding"] = "gzip";
-  }
-
   if (request.method == "GET") {
     goto GET_METHODS;
   } else if (request.method == "POST") {
@@ -229,19 +223,15 @@ void routing_logic(const int &client_fd, const Request &request) {
   // Under this line, we have GET methods
 GET_METHODS:
   if (request.path == "/" || request.path == "") {
-    std::string response_str = response.to_string();
-    send(client_fd, response_str.c_str(), response_str.length(), 0);
+    goto SEND_RESPONSE;
   } else if (request.path == "/user-agent") {
     response.body                   = request.headers.user_agent;
     response.headers.content_length = std::to_string(response.body.length());
-    std::string response_str        = response.to_string();
-
-    send(client_fd, response_str.c_str(), response_str.length(), 0);
+    goto SEND_RESPONSE;
   } else if (request.path.substr(0, 5) == "/echo") {
     response.body                   = request.path.substr(6);
     response.headers.content_length = std::to_string(response.body.length());
-    std::string response_str        = response.to_string();
-    send(client_fd, response_str.c_str(), response_str.length(), 0);
+    goto SEND_RESPONSE;
   } else if (request.path.substr(0, 6) == "/files") {
     std::string file_path = dir_path + request.path.substr(6);
     std::cout << file_path << std::endl;
@@ -251,16 +241,15 @@ GET_METHODS:
       response.body                   = content;
       response.headers.content_type   = "application/octet-stream";
       response.headers.content_length = std::to_string(response.body.length());
-      std::string response_str        = response.to_string();
-      send(client_fd, response_str.c_str(), response_str.length(), 0);
       file.close();
+      goto SEND_RESPONSE;
     } else {
-      const std::string response_str = Response().NotFound().to_string();
-      send(client_fd, response_str.c_str(), response_str.length(), 0);
+      response = Response::NotFound();
+      goto SEND_RESPONSE;
     }
   } else {
-    const std::string response_str = Response().NotFound().to_string();
-    send(client_fd, response_str.c_str(), response_str.length(), 0);
+    response = Response::NotFound();
+    goto SEND_RESPONSE;
   }
   return;
 
@@ -274,17 +263,27 @@ POST_METHODS:
       response.status_code            = "201";
       response.reason_phrase          = "Created";
       response.headers.content_length = std::to_string(response.body.length());
-      std::string response_str        = response.to_string();
-      send(client_fd, response_str.c_str(), response_str.length(), 0);
       file.close();
+      goto SEND_RESPONSE;
     } else {
-      const std::string response_str = Response().NotFound().to_string();
-      send(client_fd, response_str.c_str(), response_str.length(), 0);
+      response = Response::NotFound();
+      goto SEND_RESPONSE;
     }
   } else {
-    const std::string response_str = Response().NotFound().to_string();
-    send(client_fd, response_str.c_str(), response_str.length(), 0);
+    response = Response::NotFound();
+    goto SEND_RESPONSE;
   }
+
+SEND_RESPONSE:
+  auto other_headers = request.headers.other_headers;
+  if (other_headers.find("Accept-Encoding") != other_headers.end() &&
+      other_headers["Accept-Encoding"].find("gzip") != std::string::npos) {
+    response.headers.other_headers["Content-Encoding"] = "gzip";
+    response.body                                      = compress_string(response.body);
+    response.headers.content_length                    = std::to_string(response.body.length());
+  }
+  std::string response_str = response.to_string();
+  send(client_fd, response_str.c_str(), response_str.length(), 0);
 }
 
 void worker_thread() {
@@ -365,4 +364,14 @@ struct Request parse_request(const std::string &request_str) {
   request.body           = body;
 
   return request;
+}
+
+std::string compress_string(const std::string &str) {
+  uLongf dest_len = compressBound(str.length());
+  Bytef *dest     = new Bytef[dest_len];
+  compress(dest, &dest_len, (const Bytef *)str.c_str(), str.length());
+
+  std::string compressed_str((char *)dest, dest_len);
+  delete[] dest;
+  return compressed_str;
 }
