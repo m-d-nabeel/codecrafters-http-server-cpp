@@ -9,6 +9,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -29,24 +30,28 @@ struct Headers {
   std::string accept;
   std::string content_type;
   std::string content_length;
-  std::string accept_encoding;
-  std::string content_encoding;
+  std::unordered_map<std::string, std::string> other_headers;
 
   Headers() {
-    host             = "localhost:4221";
-    user_agent       = "curl/7.88.1";
-    accept           = "text/plain";
-    content_type     = "text/plain";
-    content_length   = "0";
-    accept_encoding  = "identity";
-    content_encoding = "identity";
+    host           = "localhost:4221";
+    user_agent     = "curl/7.88.1";
+    accept         = "*/*";
+    content_type   = "text/plain";
+    content_length = "0";
+    other_headers  = {};
   }
 
   std::string to_string() const {
+    auto other_headers_to_string = [&]() {
+      std::string result = "";
+      for (const auto &header : other_headers) {
+        result += header.first + ": " + header.second + "\r\n";
+      }
+      return result;
+    };
     return "Host: " + host + "\r\n" + "User-Agent: " + user_agent + "\r\n" + "Accept: " + accept +
         "\r\n" + "Content-Type: " + content_type + "\r\n" + "Content-Length: " + content_length +
-        "\r\n" + "Accept-Encoding: " + accept_encoding + "\r\n" +
-        "Content-Encoding: " + content_encoding + "\r\n";
+        "\r\n" + other_headers_to_string();
   }
 };
 
@@ -201,9 +206,14 @@ void handle_client(int client_fd) {
 
 void routing_logic(const int &client_fd, const Request &request) {
   struct Response response = Response();
-  if (request.headers.accept_encoding == "gzip") {
-    response.headers.content_encoding = "gzip";
+
+  auto other_headers = request.headers.other_headers;
+
+  if (other_headers.find("Accept-Encoding") != other_headers.end() &&
+      other_headers["Accept-Encoding"] == "gzip") {
+    response.headers.other_headers["Content-Encoding"] = "gzip";
   }
+
   if (request.method == "GET") {
     goto GET_METHODS;
   } else if (request.method == "POST") {
@@ -335,10 +345,8 @@ struct Request parse_request(const std::string &request_str) {
       headers.content_type = value;
     } else if (key == "Content-Length") {
       headers.content_length = value;
-    } else if (key == "Accept-Encoding") {
-      headers.accept_encoding = value;
-    } else if (key == "Content-Encoding") {
-      headers.content_encoding = value;
+    } else {
+      headers.other_headers[key] = value;
     }
   }
 
