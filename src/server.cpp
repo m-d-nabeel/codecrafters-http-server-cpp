@@ -210,7 +210,7 @@ void routing_logic(const int &client_fd, const Request &request) {
   auto other_headers = request.headers.other_headers;
 
   if (other_headers.find("Accept-Encoding") != other_headers.end() &&
-      other_headers["Accept-Encoding"] == "gzip") {
+      other_headers["Accept-Encoding"].find("gzip") != std::string::npos) {
     response.headers.other_headers["Content-Encoding"] = "gzip";
   }
 
